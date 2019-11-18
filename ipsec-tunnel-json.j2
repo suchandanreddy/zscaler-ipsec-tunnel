@@ -1,0 +1,153 @@
+{
+  "templateName": "{{config.template_name}}",
+  "templateDescription": "{{config.template_name}}",
+  "templateType": "vpn-vedge-interface-ipsec",
+  "deviceType": [
+    "{{config.device_type}}"
+  ],
+  "factoryDefault": false,
+  "templateMinVersion": "15.0.0",
+  "templateDefinition": {
+    "if-name": {
+      "vipObjectType": "object",
+      "vipType": "variableName",
+      "vipValue": "",
+      "vipVariableName": "{{config.zscaler_ipsec_if_name}}"
+    },
+    "description": {
+      "vipObjectType": "object",
+      "vipType": "ignore",
+      "vipVariableName": "vpn_if_description"
+    },
+    "ip": {
+      "address": {
+        "vipObjectType": "object",
+        "vipType": "variableName",
+        "vipValue": "",
+        "vipVariableName": "{{config.zscaler_ipsec_if_ipv4_address}}"
+      }
+    },
+    "shutdown": {
+      "vipObjectType": "object",
+      "vipType": "constant",
+      "vipValue": "false",
+      "vipVariableName": "vpn_if_shutdown"
+    },
+    "tunnel-source-interface": {
+      "vipObjectType": "object",
+      "vipType": "variableName",
+      "vipValue": "",
+      "vipVariableName": "{{config.zscaler_ipsec_if_tunnel_source_interface}}"
+    },
+    "tunnel-destination": {
+      "vipObjectType": "object",
+      "vipType": "variableName",
+      "vipValue": "",
+      "vipVariableName": "{{config.zscaler_ipsec_if_tunnel_destination}}"
+    },
+    "mtu": {
+      "vipObjectType": "object",
+      "vipType": "ignore",
+      "vipValue": 1500,
+      "vipVariableName": "vpn_if_mtu"
+    },
+    "tcp-mss-adjust": {
+      "vipObjectType": "object",
+      "vipType": "ignore",
+      "vipVariableName": "vpn_if_tcp_mss_adjust"
+    },
+    "dead-peer-detection": {
+      "dpd-interval": {
+        "vipObjectType": "object",
+        "vipType": "ignore",
+        "vipValue": 10,
+        "vipVariableName": "vpn_if_dpd_interval"
+      },
+      "dpd-retries": {
+        "vipObjectType": "object",
+        "vipType": "ignore",
+        "vipValue": 3,
+        "vipVariableName": "vpn_if_dpd_retries"
+      }
+    },
+    "ike": {
+      "ike-version": {
+        "vipObjectType": "object",
+        "vipType": "constant",
+        "vipValue": 2,
+        "vipVariableName": "vpn_if_ike_version"
+      },
+      "ike-rekey-interval": {
+        "vipObjectType": "object",
+        "vipType": "ignore",
+        "vipValue": 14400,
+        "vipVariableName": "vpn_if_ike_rekey_interval"
+      },
+      "ike-ciphersuite": {
+        "vipObjectType": "object",
+        "vipType": "ignore",
+        "vipValue": "aes256-cbc-sha1",
+        "vipVariableName": "vpn_if_ike_ciphersuite"
+      },
+      "ike-group": {
+        "vipObjectType": "object",
+        "vipType": "constant",
+        "vipValue": "2",
+        "vipVariableName": "vpn_if_ike_group"
+      },
+      "authentication-type": {
+        "pre-shared-key": {
+          "pre-shared-secret": {
+            "vipObjectType": "object",
+            "vipType": "variableName",
+            "vipValue": "",
+            "vipVariableName": "{{config.zscaler_ipsec_if_pre_shared_secret}}"
+          },
+          "ike-local-id": {
+            "vipObjectType": "object",
+            "vipType": "variableName",
+            "vipValue": "",
+            "vipVariableName": "{{config.zscaler_ipsec_if_ike_local_id}}"
+          },
+          "ike-remote-id": {
+            "vipObjectType": "object",
+            "vipType": "variableName",
+            "vipValue": "",
+            "vipVariableName": "{{config.zscaler_ipsec_if_ike_remote_id}}"
+          }
+        }
+      }
+    },
+    "ipsec": {
+      "ipsec-rekey-interval": {
+        "vipObjectType": "object",
+        "vipType": "ignore",
+        "vipValue": 3600,
+        "vipVariableName": "vpn_if_ipsec_rekey_interval"
+      },
+      "ipsec-replay-window": {
+        "vipObjectType": "object",
+        "vipType": "ignore",
+        "vipValue": 512,
+        "vipVariableName": "vpn_if_ipsec_replay_window"
+      },
+      "ipsec-ciphersuite": {
+        "vipObjectType": "object",
+        "vipType": "constant",
+        "vipValue": "null-sha1",
+        "vipVariableName": "vpn_if_ipsec_ciphersuite"
+      },
+      "perfect-forward-secrecy": {
+        "vipObjectType": "object",
+        "vipType": "constant",
+        "vipValue": "group-2",
+        "vipVariableName": "vpn_if_ipsec_perfect_forward_secrecy"
+      }
+    },
+    "tracker": {
+      "vipObjectType": "list",
+      "vipType": "ignore",
+      "vipVariableName": "tracker"
+    }
+  }
+}

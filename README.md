@@ -48,24 +48,45 @@ vmanage_password:
 zscaler_cloud: 
 api_key: 
 zscaler_username: 
-zscaler_password: 
+zscaler_password:
 
 # Device template Info
 
-device_template_name: 
+device_template_name:
+
+# IPsec route prefix for all Service VPNs
+
+#service_vpn_ipsec_route:  0.0.0.0/0
 
 # Network Routers
 devices:
   - system_ip: 
     vpn0_source_interface: 
-    psk: 
-    local_id: 
-    location_name: 
+    #local_id_domain: cisco.com
+
+#dummy /30 private ip address for IPsec tunnel
+
+    #pri_ipsec_ip: 10.10.10.1/30
+    #sec_ipsec_ip: 10.10.10.5/30
+    #pri_ipsec_id: ipsec254
+    #sec_ipsec_id: ipsec255
+    #psk: ""
+    #local_id: ""
+    #location_name: ""
+
   - system_ip: 
     vpn0_source_interface: 
-    psk: 
-    local_id: 
-    location_name: 
+    #local_id_domain: viptela.com
+
+#dummy /30 private ip address for IPsec tunnel
+
+    #pri_ipsec_ip: 10.10.10.1/30
+    #sec_ipsec_ip: 10.10.10.5/30
+    #pri_ipsec_id: ipsec254
+    #sec_ipsec_id: ipsec255
+    #psk: ""
+    #local_id: ""
+    #location_name: ""
 ```
 
 After setting the env variables, run the python script `zscaler-ipsec-tunnel.py`
@@ -83,6 +104,8 @@ After setting the env variables, run the python script `zscaler-ipsec-tunnel.py`
 - Using the tunnel source ip address, retrieve the nearest zscaler cloud endpoint IP addresses using the zscaler API `/pac.<zscaler-cloud-name>/getVpnEndpoints?srcIp=`
 - Create VPN endpoint on zscaler using API `/admin.<zscaler-cloud-name>/api/v1/vpnCredentials`
 - Create location using API `/admin.<zscaler-cloud-name>/api/v1/locations` and bind it to the VPN endpoint created in above step. 
+- Default location name is `hostname + location city name based on Public IP`
+- Default local id is `hostname + uuid + @cisco.com`
 - Zscaler VPN endpoints and locations are created for IPsec tunnels from each vEdge router
 
 ### Automation using vManage APIs:
@@ -94,20 +117,22 @@ After setting the env variables, run the python script `zscaler-ipsec-tunnel.py`
 - Add the device specific variables values for IPsec tunnel source interface, tunnel ip address, tunnel destination address, local-id, remote-id, pre-shared key.
 - Push the updated template to all the devices attached to the Device template.
 - By end of the script, 2 zscaler tunnels(primary and secondary) would be configured to the nearest Zscaler VPN endpoint from each vEdge router which is attached to the device template. 
+- Create IPsec route in all service VPNs. By default we create default IPsec route in service VPN but destination prefix for IPsec route can be modified using variable `service_vpn_ipsec_route` in config_details.yaml
 
 ## Restrictions
 
+- Default dummy IP addresses used for tunnels are 10.10.10.1/30 (for primary) and 10.10.10.5/30 (for secondary) , can be changed using `config_details.yaml` variables `pri_ipsec_ip` and `sec_ipsec_ip` if there is overlapping address with other interfaces in VPN 0
 - vEdge should be in vManage mode with device template attached which contains VPN 0 feature template and at least one VPN 0 interface which can be used as source interface for the IPsec tunnel. 
-- Script creates IPsec feature templates with names `zscaler_ipsec_primary` and `zscaler_ipsec_secondary` so, there shouldn't pre-configured IPsec feature templates with this name. If needed, we can change the code to create IPsec feature templates with alternative name. 
+- Script creates IPsec feature templates with names **Device Template name** + `_zscaler_ipsec_primary` and **Device Template name** + `_zscaler_ipsec_secondary` so, there shouldn't pre-configured IPsec feature templates with this name. If needed, we can change the code to create IPsec feature templates with alternative name. 
 
 ## Sample output
 
 ```
-$ python3 zscaler-ipsec-tunnel.py 
+(venv) msuchand@MSUCHAND-M-Q1FH zscaler-ipsec-tunnel % python3 zscaler-ipsec-tunnel.py
 
 Loading configuration details from YAML
 
-Device: 1.1.1.7
+Creating Zscaler VPN and location for device: 1.1.1.7
 
 Retrieved Zscaler VPN endpoint IP addresses
 
@@ -117,7 +142,11 @@ Created locations and binded them to Zscaler VPN end points
 
 Activated Zscaler changes
 
-Device: 1.1.1.8
+Creating Zscaler VPN and location for device: 1.1.1.8
+
+Source interface ip address is 10.20.20.1 so seems device is behind NAT!!
+
+Please enter NAT Public IP address so that we can find nearest Zscaler location:<Public IP address>
 
 Retrieved Zscaler VPN endpoint IP addresses
 
@@ -126,6 +155,8 @@ Created Zscaler VPN endpoints
 Created locations and binded them to Zscaler VPN end points
 
 Activated Zscaler changes
+
+Successfully deleted Zscaler API session
 
 Fetching Template uuid of DC-vedges
 
@@ -139,5 +170,11 @@ Fetching device csv values
 
 Attaching new device template
 
-Template push status is done
+Updated IPsec templates successfully
+
+Service VPN Templates list ['1661884f-b9a1-4d18-91a8-f6ba6798a1b5', 'b09cb27f-970c-4ba5-95e1-58817ed3f1b2']
+
+Updated Service VPN template 1661884f-b9a1-4d18-91a8-f6ba6798a1b5 successfully
+
+Updated Service VPN template b09cb27f-970c-4ba5-95e1-58817ed3f1b2 successfully
 ```

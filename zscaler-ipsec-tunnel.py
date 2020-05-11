@@ -6,7 +6,10 @@ import time
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import yaml
+import ipaddress
+import uuid
 from jinja2 import Template
+import secrets
 
 requests.packages.urllib3.disable_warnings()
 
@@ -47,6 +50,71 @@ def get_logger(logfile, level):
         return logger
 
     return None
+
+def get_device_ids(jsessionid,token,template_id):
+
+    if token is not None:
+        headers = {'Content-Type': "application/json",'Cookie': jsessionid, 'X-XSRF-TOKEN': token}
+    else:
+        headers = {'Content-Type': "application/json",'Cookie': jsessionid}
+
+    base_url = "https://%s:%s/dataservice"%(vmanage_host,vmanage_port)
+
+    api_url = '/template/device/config/attached/' + template_id
+
+    url = base_url + api_url
+
+    response = requests.get(url=url, headers=headers,verify=False)
+
+    if response.status_code == 200:
+        device_ids = []
+        for device in response.json()['data']:
+            device_ids.append(device['uuid'])
+        if logger is not None:
+            logger.info("Device ids " + str(device_ids))
+        return device_ids
+    else:
+        if logger is not None:
+            logger.error("Failed to get device ids " + str(response.text))
+        exit()
+
+def get_device_inputs(jsessionid,token,template_id, device_ids):
+
+    if token is not None:
+        headers = {'Content-Type': "application/json",'Cookie': jsessionid, 'X-XSRF-TOKEN': token}
+    else:
+        headers = {'Content-Type': "application/json",'Cookie': jsessionid}
+
+    payload = {
+        'templateId': template_id,
+        'deviceIds': device_ids,
+        'isEdited': True,
+        'isMasterEdited': False
+    }
+
+    base_url = "https://%s:%s/dataservice"%(vmanage_host,vmanage_port)
+
+    api_url = '/template/device/config/input'
+
+    url = base_url + api_url    
+
+    response = requests.post(url=url, headers=headers, data=json.dumps(payload), verify=False)
+
+    if response.status_code == 200:
+
+        device_inputs = response.json()['data']
+
+        for input in device_inputs:
+            input['csv-templateId'] = template_id
+    
+        if logger is not None:
+            logger.info("Device config input" + str(device_inputs))
+    else:
+        if logger is not None:
+            logger.error("Failed to get device config input " + str(response.text))
+        exit()
+
+    return device_inputs
 
 
 class Authentication:
@@ -108,13 +176,13 @@ class zscaler_api:
 
         payload = {"username":self.username,"password":self.password,"apiKey":obfuscatedApiKey,"timestamp":ts}
 
-        header = {
+        headers = {
                     'content-type': "application/json",
                     'cache-control': "no-cache"
                 }
 
         url = "https://admin.%s/api/v1/authenticatedSession"%(self.zscaler_cloud)
-        response = requests.post(url=url, data=json.dumps(payload), headers=header)
+        response = requests.post(url=url, data=json.dumps(payload), headers=headers)
         if logger is not None:
             logger.info(response.text)
 
@@ -146,7 +214,28 @@ class zscaler_api:
                 logger.error("\nActivating zscaler changes failed")
             print("\nActivating zscaler changes failed")
             exit()
+
+    def delete_session(self,jsession_id):
+
+        headers = {
+                    'content-type': "application/json",
+                    'cache-control': "no-cache",
+                    'cookie': (jsession_id)
+                  }
         
+        url = "https://admin.%s/api/v1/authenticatedSession"%(self.zscaler_cloud)
+
+        response = requests.delete(url=url, headers=headers)
+
+        if response.status_code == 200:
+            print("\nSuccessfully deleted Zscaler API session")
+            if logger is not None:
+                logger.info("\nSuccessfully deleted Zscaler API session " + str(response.text))
+        else:
+            print("\nFailed to delete Zscaler API session")
+            if logger is not None:
+                logger.info("\nFailed to delete Zscaler API session " + str(response.text))
+
     def get_locations(self,source_ip):
 
         location_ips_url = "https://pac.%s/getVpnEndpoints?srcIp=%s"%(self.zscaler_cloud,source_ip)
@@ -170,17 +259,17 @@ class zscaler_api:
     
     def create_vpn(self,jsession_id,psk,local_id):
 
+        headers = {
+            'content-type': "application/json",
+            'cache-control': "no-cache",
+            'cookie': (jsession_id)
+        }
+
         vpn_payload = {
             "type": "UFQDN",
             "fqdn": local_id,
             "comments":"created automatically via API",
             "preSharedKey": psk
-        }
-
-        headers = {
-            'content-type': "application/json",
-            'cache-control': "no-cache",
-            'cookie': (jsession_id)
         }
 
         url = "https://admin.%s/api/v1/vpnCredentials"%(self.zscaler_cloud)
@@ -194,7 +283,7 @@ class zscaler_api:
         else:
             if logger is not None:
                 logger.error("Creating VPN failed " + str(response.text))
-            print("\nCreating VPN failed,",response.text)
+            print("\nCreating VPN failed ",response.text)
             exit()
 
     def create_location(self,jsession_id,vpn,loc_name):
@@ -236,6 +325,7 @@ class create_ipsec_tunnel:
         self.token = token
 
     def get_interface_ip(self,system_ip,vpn0_source_interface):
+
         if self.token is not None:
             headers = {'Cookie': self.jsessionid, 'X-XSRF-TOKEN': self.token}
         else:
@@ -243,21 +333,67 @@ class create_ipsec_tunnel:
 
         api = "device/interface?deviceId=%s&vpn-id=0&ifname=%s&af-type=ipv4"%(system_ip,vpn0_source_interface)
         url = self.base_url + api
-
+    
         response = requests.get(url=url,headers=headers,verify=False)
         if response.status_code == 200:
             try:
                 data = response.json()["data"][0]
-                ip_address = data["ip-address"].split("/")[0]
+                interface_ip = data["ip-address"].split("/")[0]
+                
+                while(1):
+
+                    if ipaddress.ip_address(interface_ip).is_private:
+                        print("\nSource interface ip address is %s so seems device is behind NAT!!\n"%interface_ip)
+                        interface_ip = input("Please enter NAT Public IP address so that we can find nearest Zscaler location:")                        
+                    else:
+                        break
+
                 if logger is not None:
-                    logger.info("\nsource ip address for tunnels is " + str(ip_address))
-                return ip_address
+                    logger.info("\nPublic source ip address for tunnels is " + str(interface_ip))
+                
+                return interface_ip
             except Exception as e:
                 if logger is not None:
                     logger.error("\nError fetching ip address " + str(e))
                 print("\nError fetching ip address",e)
                 exit()
-    
+
+        else:
+                if logger is not None:
+                    logger.error("\nError fetching ip address")
+                print("\nError fetching ip address")
+                exit()                                  
+
+
+    def get_hostname(self,system_ip):
+
+        if self.token is not None:
+            headers = {'Cookie': self.jsessionid, 'X-XSRF-TOKEN': self.token}
+        else:
+            headers = {'Cookie': self.jsessionid}
+
+        api = "device/system/info?deviceId=%s"%(system_ip)
+
+        url = self.base_url + api
+
+        response = requests.get(url=url,headers=headers,verify=False)
+        if response.status_code == 200:
+            try:
+                hostname = response.json()["data"][0]["host-name"]
+                return hostname
+            except Exception as e:
+                if logger is not None:
+                    logger.error("\nError fetching host name " + str(e))
+                print("\nError fetching host name",e)
+                exit()                                  
+
+        else:
+                if logger is not None:
+                    logger.error("\nError fetching host name")
+                print("\nError fetching host name")
+                exit()                                  
+
+
     def get_device_templateid(self,device_template_name):
         if self.token is not None:
             headers = {'Cookie': self.jsessionid, 'X-XSRF-TOKEN': self.token}
@@ -330,7 +466,7 @@ class create_ipsec_tunnel:
 
             
             tunnel_data = dict()
-            tunnel_data["template_name"] = "zscaler_ipsec_primary"
+            tunnel_data["template_name"] = device_info["device_template_name"] + "_zscaler_ipsec_primary"
             tunnel_data["device_type"] = device_info["device_type"]
             tunnel_data["zscaler_ipsec_if_name"] = "zscaler_ipsec_interface_1"
             tunnel_data["zscaler_ipsec_if_ipv4_address"] = "zscaler_ipsec_ipv4_add_1"
@@ -362,7 +498,7 @@ class create_ipsec_tunnel:
                 print("\nFailed creating primary ipsec interface template, error: ",pri_template_response.text)
                 exit()
             
-            tunnel_data["template_name"] = "zscaler_ipsec_secondary"
+            tunnel_data["template_name"] = device_info["device_template_name"] + "_zscaler_ipsec_secondary"
             tunnel_data["zscaler_ipsec_if_name"] = "zscaler_ipsec_interface_2"
             tunnel_data["zscaler_ipsec_if_ipv4_address"] = "zscaler_ipsec_ipv4_add_2"
             tunnel_data["zscaler_ipsec_if_tunnel_source_interface"] = "zscaler_ipsec_source_int_2"
@@ -410,13 +546,22 @@ class create_ipsec_tunnel:
 
         feature_template_list = feature_template_ids["generalTemplates"]
 
-        for item in feature_template_list:
+        service_vpn_templates = list()
+            
+        for index,item in enumerate(feature_template_list):
             if item["templateType"] == "vpn-vedge":
                 sub_templates = item["subTemplates"]
                 sub_templates.append(ipsec_templateid[0])
                 sub_templates.append(ipsec_templateid[1])
+                temp = index+2
+                while(1):
+                    if feature_template_list[temp]['templateType'] == 'vpn-vedge':
+                        service_vpn_templates.append(feature_template_list[temp]['templateId'])
+                    temp = temp+1
+                    if len(feature_template_list) < temp+1:
+                        break
                 break
-            
+
         payload = {
                     "templateId":device_template_id,"templateName":device_template_name,
                     "templateDescription":feature_template_ids["templateDescription"],
@@ -480,15 +625,17 @@ class create_ipsec_tunnel:
             sys_ip = item1["csv-deviceIP"]
             for item2 in ipsec_parameters:
                 if sys_ip == item2["device_sys_ip"]:
-                    item1["/0/zscaler_ipsec_interface_1/interface/if-name"] = "ipsec1"
-                    item1["/0/zscaler_ipsec_interface_1/interface/ip/address"] = "10.10.10.1/30"
+                    temp_pri_ipsec_id = item2["pri_ipsec_id"] # to use ipsec interface id in service vpn template  update
+                    item1["/0/zscaler_ipsec_interface_1/interface/if-name"] = item2["pri_ipsec_id"]
+                    item1["/0/zscaler_ipsec_interface_1/interface/ip/address"] = item2["pri_ipsec_ip"]
                     item1["/0/zscaler_ipsec_interface_1/interface/tunnel-source-interface"] = item2["vpn0_source_interface"]
                     item1["/0/zscaler_ipsec_interface_1/interface/tunnel-destination"] = item2["zscaler_primary_dst_ip"]
                     item1["/0/zscaler_ipsec_interface_1/interface/ike/authentication-type/pre-shared-key/pre-shared-secret"] = item2["pre_shared_key"]
                     item1["/0/zscaler_ipsec_interface_1/interface/ike/authentication-type/pre-shared-key/ike-local-id"] = item2["local_id"]
                     item1["/0/zscaler_ipsec_interface_1/interface/ike/authentication-type/pre-shared-key/ike-remote-id"] = item2["zscaler_primary_dst_ip"]
-                    item1["/0/zscaler_ipsec_interface_2/interface/if-name"] = "ipsec2"
-                    item1["/0/zscaler_ipsec_interface_2/interface/ip/address"] = "10.10.10.5/30"
+                    temp_sec_ipsec_id = item2["sec_ipsec_id"] # to use ipsec interface id in service vpn template  update
+                    item1["/0/zscaler_ipsec_interface_2/interface/if-name"] = item2["sec_ipsec_id"]
+                    item1["/0/zscaler_ipsec_interface_2/interface/ip/address"] = item2["sec_ipsec_ip"]
                     item1["/0/zscaler_ipsec_interface_2/interface/tunnel-source-interface"] = item2["vpn0_source_interface"]
                     item1["/0/zscaler_ipsec_interface_2/interface/tunnel-destination"] = item2["zscaler_secondary_dst_ip"]
                     item1["/0/zscaler_ipsec_interface_2/interface/ike/authentication-type/pre-shared-key/pre-shared-secret"] = item2["pre_shared_key"]
@@ -540,16 +687,194 @@ class create_ipsec_tunnel:
         while(1):
             template_status_res = requests.get(url,headers=headers,verify=False)
             if template_status_res.status_code == 200:
-                if template_status_res.json()['summary']['status'] == "done":
-                    print("\nTemplate push status is done")
-                    if logger is not None:
-                        logger.info("\nTemplate push status is done")
-                    return
+                template_push_status = template_status_res.json()
+                if template_push_status['summary']['status'] == "done":
+                    if 'Success' in template_push_status['summary']['count']:
+                        print("\nUpdated IPsec templates successfully")
+                        if logger is not None:
+                            logger.info("\nUpdated IPsec templates successfully")
+                    elif 'Failure' in template_push_status['summary']['count']:
+                        print("\nFailed to update IPsec templates")
+                        if logger is not None:
+                            logger.info("\nFailed to update IPsec templates " + str(template_push_status["data"][0]["activity"]))
+                        exit()
+                    break
             else:
                 if logger is not None:
                     logger.error("\nFetching template push status failed " + str(template_status_res.text))                
                 print("\nFetching template push status failed")
                 exit()
+
+        # Update service VPN template with IPsec route
+
+        print("\nService VPN Templates list", service_vpn_templates)
+
+        for item in service_vpn_templates:
+            
+            api = "template/feature/object/%s"%item
+            url = self.base_url + api
+
+            service_vpn_def = requests.get(url,headers=headers,verify=False)
+
+            if service_vpn_def.status_code == 200:
+                template_def = service_vpn_def.json()
+
+                ipsec_route_def = template_def["templateDefinition"]["ip"]["ipsec-route"]
+
+                if not ipsec_route_def:
+                    ipsec_route_def["vipType"] = "constant"
+                    ipsec_route_def["vipValue"] = [
+                                                    {
+                                                        "prefix": {
+                                                        "vipObjectType": "object",
+                                                        "vipType": "constant",
+                                                        "vipValue": device_info["service_vpn_ipsec_route"],
+                                                        "vipVariableName": "vpn_ipsec_route_ipsec_route_prefix"
+                                                        },
+                                                        "vpn": {
+                                                        "vipObjectType": "object",
+                                                        "vipType": "constant",
+                                                        "vipValue": 0
+                                                        },
+                                                        "interface": {
+                                                        "vipObjectType": "list",
+                                                        "vipType": "constant",
+                                                        "vipValue": [
+                                                            temp_pri_ipsec_id,
+                                                            temp_sec_ipsec_id
+                                                        ],
+                                                        "vipVariableName": "vpn_ipsec_route_ipsec_route_interface"
+                                                        },
+                                                        "priority-order": [
+                                                        "prefix",
+                                                        "vpn",
+                                                        "interface"
+                                                        ]
+                                                    }
+                                                  ]
+
+                    ipsec_route_def["vipObjectType"] = "tree"
+                    ipsec_route_def["vipPrimaryKey"] = [
+                                                         "prefix"
+                                                       ]
+                
+                else:
+                    temp  =            {
+                                            "prefix": {
+                                            "vipObjectType": "object",
+                                            "vipType": "constant",
+                                            "vipValue": device_info["service_vpn_ipsec_route"],
+                                            "vipVariableName": "vpn_ipsec_route_ipsec_route_prefix"
+                                            },
+                                            "vpn": {
+                                            "vipObjectType": "object",
+                                            "vipType": "constant",
+                                            "vipValue": 0
+                                            },
+                                            "interface": {
+                                            "vipObjectType": "list",
+                                            "vipType": "constant",
+                                            "vipValue": [
+                                                temp_pri_ipsec_id,
+                                                temp_sec_ipsec_id
+                                            ],
+                                            "vipVariableName": "vpn_ipsec_route_ipsec_route_interface"
+                                            },
+                                            "priority-order": [
+                                            "prefix",
+                                            "vpn",
+                                            "interface"
+                                            ]
+                                        }
+                    
+                    ipsec_route_def["vipValue"].append(temp)
+
+
+                template_def["templateDefinition"]["ip"]["ipsec-route"] = ipsec_route_def
+
+            api = "template/feature/%s"%item
+            url = self.base_url + api
+
+            payload = {
+                         "templateName" : template_def["templateName"],
+                         "templateDescription" : template_def["templateDescription"],
+                         "templateType" : template_def["templateType"],
+                         "deviceType" : template_def["deviceType"],
+                         "templateMinVersion" : template_def["templateMinVersion"],
+                         "templateDefinition" : template_def["templateDefinition"],
+                         "factoryDefault" : False
+                      }
+
+            payload = json.dumps(payload)
+
+            if logger is not None:
+                logger.info("\nService VPN template JSON payload " + str(payload))
+
+            update_service_vpn = requests.put(url,headers=headers,data=payload,verify=False)
+
+            if update_service_vpn.status_code == 200:
+                master_templates_affected = update_service_vpn.json()["masterTemplatesAffected"]
+            else:
+                if logger is not None:
+                    logger.error("\nFailed to edit Service VPN template " + str(update_service_vpn.text))
+                exit()
+
+            # Get device uuid and csv variables for each template id which is affected by prefix list edit operation
+
+            inputs = []
+
+            for template_id in master_templates_affected:
+                device_ids = get_device_ids(self.jsessionid,self.token,template_id)
+                device_inputs = get_device_inputs(self.jsessionid,self.token,template_id,device_ids)
+                inputs.append((template_id, device_inputs))
+
+
+            device_template_list = []
+            
+            for (template_id, device_input) in inputs:
+                device_template_list.append({
+                    'templateId': template_id,
+                    'isEdited': True,
+                    'device': device_input
+                })
+
+
+            #api_url for CLI template 'template/device/config/attachcli'
+
+            api_url = 'template/device/config/attachfeature'
+
+            url = self.base_url + api_url
+
+            payload = { 'deviceTemplateList': device_template_list }
+
+            response = requests.post(url=url, headers=headers,  data=json.dumps(payload), verify=False)
+
+            if response.status_code == 200:
+                process_id = response.json()["id"]
+                if logger is not None:
+                    logger.info("Attach template process id " + str(response.text))
+            else:
+                if logger is not None:
+                    logger.error("Template attach process failed " + str(response.text)) 
+                exit()    
+
+            api_url = 'device/action/status/' + process_id  
+
+            url = self.base_url + api_url
+
+            while(1):
+                time.sleep(10)
+                response = requests.get(url=url, headers=headers, verify=False)
+                if response.status_code == 200:
+                    if response.json()['summary']['status'] == "done":
+                        logger.info("\nUpdated Service VPN template %s successfully"%item)
+                        print("\nUpdated Service VPN template %s successfully"%item)
+                        break
+                    else:
+                        continue
+                else:
+                    logger.error("\nFetching template push status failed " + str(response.text))
+                    exit()
 
 if __name__ == "__main__":
     try:
@@ -557,7 +882,7 @@ if __name__ == "__main__":
         logger = get_logger("log/ipsec_logs.txt", log_level)
         if logger is not None:
             logger.info("Loading configuration details from YAML\n")
-            print("Loading configuration details from YAML\n")
+            print("\nLoading configuration details from YAML")
         with open("config_details.yaml") as f:
             config = yaml.safe_load(f.read())
         
@@ -566,6 +891,7 @@ if __name__ == "__main__":
         vmanage_username = config["vmanage_username"]
         vmanage_password = config["vmanage_password"]
         device_template_name = config["device_template_name"]
+        service_vpn_ipsec_route = config.get("service_vpn_ipsec_route","0.0.0.0/0")
 
         zscaler_cloud = config["zscaler_cloud"]
         api_key = config["api_key"]
@@ -578,22 +904,51 @@ if __name__ == "__main__":
         ipsec_tunnel = create_ipsec_tunnel(vmanage_host,vmanage_port,jsessionid, token)
         zscaler_config = zscaler_api(zscaler_cloud,zscaler_username,zscaler_password,api_key)
         z_jsession_id = zscaler_config.get_jsessionid()
+
         ipsec_parameters = list()
         if logger is not None:
             logger.info(z_jsession_id)
+
         # Loop over edge routers to create and deploy ipsec tunnel to zscaler vpn endpoint
         for device in config["devices"]:
-            print("Device: {}".format(device["system_ip"]))
-            source_ip = ipsec_tunnel.get_interface_ip(device["system_ip"],device["vpn0_source_interface"])
+            print("\nCreating Zscaler VPN and location for device: {}".format(device["system_ip"]))
 
-            psk = device["psk"]
-            local_id = device["local_id"]
-            loc_name = device["location_name"]
+            pri_ipsec_id = device.get("pri_ipsec_id","ipsec254")
+            sec_ipsec_id = device.get("sec_ipsec_id","ipsec255")
+            pri_ipsec_ip = device.get("pri_ipsec_ip","10.10.10.1/30")
+            sec_ipsec_ip = device.get("sec_ipsec_ip","10.10.10.5/30")
+            domain_name = device.get("local_id_domain","cisco.com")
+
+            source_ip = ipsec_tunnel.get_interface_ip(device["system_ip"],device["vpn0_source_interface"])
+            
+            hostname = ipsec_tunnel.get_hostname(device["system_ip"])
+
+            geo_loc = requests.get("https://ipinfo.io/%s/json"%source_ip)
+
+            geo_data = dict()
+
+            if geo_loc.status_code == 200:
+                geo_data = geo_loc.json()
+
+            psk = device.get("psk",secrets.token_hex(16))
+
+            local_id = device.get("local_id",hostname+"-"+str(uuid.uuid4()))
+
+            loc_name = device.get("location_name",hostname+"-"+geo_data.get("city"))
+
+            if logger is not None:
+                logger.info("\nLocal id and Location name are %s %s"%(local_id,loc_name))
+
 
             locations = zscaler_config.get_locations(source_ip)
             if logger is not None:
                 logger.info(locations)
             print("\nRetrieved Zscaler VPN endpoint IP addresses")
+
+            #update local id with domain name
+
+            local_id = local_id + "@" + domain_name 
+
             vpn = zscaler_config.create_vpn(z_jsession_id,psk,local_id)
             if logger is not None:
                 logger.info(vpn)
@@ -612,6 +967,10 @@ if __name__ == "__main__":
 
             temp_parameters =  { 
                                  "device_sys_ip":device["system_ip"],
+                                 "pri_ipsec_id": pri_ipsec_id,
+                                 "sec_ipsec_id": sec_ipsec_id,
+                                 "pri_ipsec_ip": pri_ipsec_ip,
+                                 "sec_ipsec_ip": sec_ipsec_ip,
                                  "zscaler_primary_dst_ip": locations['z_primary'],
                                  "zscaler_secondary_dst_ip": locations['z_secondary'],
                                  "local_id": local_id,
@@ -624,15 +983,22 @@ if __name__ == "__main__":
             if logger is not None:
                 logger.info("\nTunnel parameters are " + str(ipsec_parameters))
 
+        # Cleanup Zscaler session
+
+        zscaler_config.delete_session(z_jsession_id)
+
         device_info = ipsec_tunnel.get_device_templateid(device_template_name)
-            
+
+        device_info["device_template_name"] = device_template_name
+        device_info["service_vpn_ipsec_route"] = service_vpn_ipsec_route
+
         feature_templateids = ipsec_tunnel.get_feature_templates(device_info["device_template_id"])
 
         ipsec_templateid = ipsec_tunnel.create_ipsec_templates(device_info)
-            
+
         ipsec_tunnel.push_device_template(device_info,ipsec_templateid,ipsec_parameters,feature_templateids)
 
     except Exception as e:
-        print(e)
+        print('Exception line number: {}'.format(sys.exc_info()[-1].tb_lineno), type(e).__name__, e)
 
 

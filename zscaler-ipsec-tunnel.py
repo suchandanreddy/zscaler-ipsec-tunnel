@@ -287,34 +287,46 @@ class zscaler_api:
             exit()
 
     def create_location(self,jsession_id,vpn,loc_name):
-        location_payload = {
-                            "name": loc_name,
-                            "vpnCredentials": [
-                                {
-                                "id": vpn["id"],
-                                "type": "UFQDN",
-                                "fqdn": vpn["fqdn"]
-                                }]
-                            }
 
-        headers = {
-                    'content-type': "application/json",
-                    'cache-control': "no-cache",
-                    'cookie': (jsession_id)
-                  }
+        while(1):
 
-        url = "https://admin.%s/api/v1/locations"%(self.zscaler_cloud)
-        response = requests.post(url=url, headers=headers, data=json.dumps(location_payload))
-        if logger is not None:
-            logger.info("\nStatus of location creation " + str(response.text))
-        if response.status_code == 200:
-            data = response.json()
-            return(data)
-        else:        
+            location_payload = {
+                                "name": loc_name,
+                                "vpnCredentials": [
+                                    {
+                                    "id": vpn["id"],
+                                    "type": "UFQDN",
+                                    "fqdn": vpn["fqdn"]
+                                    }]
+                                }
+
+            headers = {
+                        'content-type': "application/json",
+                        'cache-control': "no-cache",
+                        'cookie': (jsession_id)
+                    }
+
+            url = "https://admin.%s/api/v1/locations"%(self.zscaler_cloud)
+            response = requests.post(url=url, headers=headers, data=json.dumps(location_payload))
+
             if logger is not None:
-                logger.error("\nCreating Location failed " + str(response.text))
-            print("\nCreating Location failed ",response.text)
-            exit()
+                logger.info("\nStatus of location creation " + str(response.text))
+
+            if response.status_code == 200:
+                data = response.json()
+                return(data)
+            elif response.status_code == 409:
+                data = response.json()
+                print("\nFailed to create location due to error code", data["code"], " and error message", data["message"])
+                if data["code"] == "DUPLICATE_ITEM":
+                    loc_name = input("\nPlease enter unique location name:")
+                else:
+                    exit()
+            else:        
+                if logger is not None:
+                    logger.error("\nCreating Location failed " + str(response.text))
+                print("\nCreating Location failed ",response.text)
+                exit()
 
 class create_ipsec_tunnel:
 

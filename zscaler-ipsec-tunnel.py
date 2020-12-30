@@ -336,21 +336,39 @@ class create_ipsec_tunnel:
         self.jsessionid = jsessionid
         self.token = token
 
-    def get_interface_ip(self,system_ip,vpn0_source_interface):
+    def get_interface_ip(self,system_ip,vpn0_source_interface,device_model_type):
 
         if self.token is not None:
             headers = {'Cookie': self.jsessionid, 'X-XSRF-TOKEN': self.token}
         else:
             headers = {'Cookie': self.jsessionid}
 
-        api = "device/interface?deviceId=%s&vpn-id=0&ifname=%s&af-type=ipv4"%(system_ip,vpn0_source_interface)
+        if device_model_type == 'vedge':
+            api = "device/interface?deviceId=%s&vpn-id=0&ifname=%s&af-type=ipv4"%(system_ip,vpn0_source_interface)
+        elif device_model_type == 'cedge':
+            api = "device/interface?deviceId=%s&ifname=%s"%(system_ip,vpn0_source_interface)
+        else:
+            if logger is not None:
+                logger.error("\nUnknown Device Model Type. Device Model should be 'cedge' or 'vedge' ")
+            print("\nUnknown Device Model Type. Device Model should be 'cedge' or 'vedge' ")
+            exit()
+
         url = self.base_url + api
     
         response = requests.get(url=url,headers=headers,verify=False)
         if response.status_code == 200:
             try:
                 data = response.json()["data"][0]
-                interface_ip = data["ip-address"].split("/")[0]
+                if device_model_type == 'vedge':
+                    interface_ip = data["ip-address"].split("/")[0]
+                elif device_model_type == 'cedge':
+                    interface_ip = data["ip-address"]
+                else:
+                    if logger is not None:
+                        logger.error("\nUnknown Device Model Type. Device Model should be 'cedge' or 'vedge' ")
+                    print("\nUnknown Device Model Type. Device Model should be 'cedge' or 'vedge' ")
+                    exit()         
+                print("\nInterface IP address %s"%interface_ip)
                 
                 while(1):
 
@@ -469,8 +487,17 @@ class create_ipsec_tunnel:
             else:
                 headers = {'Content-Type': "application/json",'Cookie': self.jsessionid}
 
-            with open("ipsec-tunnel-json.j2") as f:
-                ipsec_int = Template(f.read())
+            if device_info["device_model_type"] == "vedge":
+                with open("vedge-ipsec-tunnel-json.j2") as f:
+                    ipsec_int = Template(f.read())
+            elif device_info["device_model_type"] == "cedge":
+                with open("cedge-ipsec-tunnel-json.j2") as f:
+                    ipsec_int = Template(f.read())
+            else:
+                if logger is not None:
+                    logger.error("\nUnknown Device Model Type. Device Model should be 'cedge' or 'vedge' ")
+                print("\nUnknown Device Model Type. Device Model should be 'cedge' or 'vedge' ")
+                exit()
 
             print("\nCreating IPsec features templates")
             if logger is not None:
@@ -532,16 +559,31 @@ class create_ipsec_tunnel:
                 print("\nFailed creating secondary ipsec interface template, error: ",sec_template_response.text)
                 exit()
 
-            pri_ipsec_int_template = {
-                                       "templateId": pri_ipsec_int_template_id,
-                                       "templateType": "vpn-vedge-interface-ipsec",
-                                     }
+            if device_info["device_model_type"] == "cedge":
+                pri_ipsec_int_template = {
+                                            "templateId": pri_ipsec_int_template_id,
+                                            "templateType": "cisco_vpn_interface_ipsec"
+                                        }
 
-            sec_ipec_int_template = {
-                                        "templateId":sec_ipsec_int_template_id,
-                                        "templateType": "vpn-vedge-interface-ipsec"
-                                    }
+                sec_ipec_int_template = {
+                                            "templateId":sec_ipsec_int_template_id,
+                                            "templateType": "cisco_vpn_interface_ipsec"
+                                        }
+            elif device_info["device_model_type"] == "vedge":
+                pri_ipsec_int_template = {
+                                            "templateId": pri_ipsec_int_template_id,
+                                            "templateType": "vpn-vedge-interface-ipsec"
+                                        }
 
+                sec_ipec_int_template = {
+                                            "templateId":sec_ipsec_int_template_id,
+                                            "templateType": "vpn-vedge-interface-ipsec"
+                                        }
+            else:
+                if logger is not None:
+                    logger.error("\nUnknown Device Model Type. Device Model should be 'cedge' or 'vedge' ")
+                print("\nUnknown Device Model Type. Device Model should be 'cedge' or 'vedge' ")
+                exit()
             ipsec_int_template = [pri_ipsec_int_template,sec_ipec_int_template]
             
             return(ipsec_int_template)
@@ -559,15 +601,26 @@ class create_ipsec_tunnel:
         feature_template_list = feature_template_ids["generalTemplates"]
 
         service_vpn_templates = list()
+
+        if device_info["device_model_type"] == "cedge":
+            template_type = "cisco_vpn"
+        elif device_info["device_model_type"] == "vedge":
+            template_type = "vpn-vedge"
+        else:
+            if logger is not None:
+                logger.error("\nUnknown Device Model Type. Device Model should be 'cedge' or 'vedge' ")
+            print("\nUnknown Device Model Type. Device Model should be 'cedge' or 'vedge' ")
+            exit()
+
             
         for index,item in enumerate(feature_template_list):
-            if item["templateType"] == "vpn-vedge":
+            if item["templateType"] == template_type:
                 sub_templates = item["subTemplates"]
                 sub_templates.append(ipsec_templateid[0])
                 sub_templates.append(ipsec_templateid[1])
                 temp = index+2
                 while(1):
-                    if feature_template_list[temp]['templateType'] == 'vpn-vedge':
+                    if feature_template_list[temp]['templateType'] == template_type:
                         service_vpn_templates.append(feature_template_list[temp]['templateId'])
                     temp = temp+1
                     if len(feature_template_list) < temp+1:
@@ -903,6 +956,7 @@ if __name__ == "__main__":
         vmanage_username = config["vmanage_username"]
         vmanage_password = config["vmanage_password"]
         device_template_name = config["device_template_name"]
+        device_model_type = config["device_model_type"]
         service_vpn_ipsec_route = config.get("service_vpn_ipsec_route","0.0.0.0/0")
 
         zscaler_cloud = config["zscaler_cloud"]
@@ -931,7 +985,7 @@ if __name__ == "__main__":
             sec_ipsec_ip = device.get("sec_ipsec_ip","10.10.10.5/30")
             domain_name = device.get("local_id_domain","cisco.com")
 
-            source_ip = ipsec_tunnel.get_interface_ip(device["system_ip"],device["vpn0_source_interface"])
+            source_ip = ipsec_tunnel.get_interface_ip(device["system_ip"],device["vpn0_source_interface"],device_model_type)
             
             hostname = ipsec_tunnel.get_hostname(device["system_ip"])
 
@@ -1002,6 +1056,7 @@ if __name__ == "__main__":
         device_info = ipsec_tunnel.get_device_templateid(device_template_name)
 
         device_info["device_template_name"] = device_template_name
+        device_info["device_model_type"] = device_model_type
         device_info["service_vpn_ipsec_route"] = service_vpn_ipsec_route
 
         feature_templateids = ipsec_tunnel.get_feature_templates(device_info["device_template_id"])

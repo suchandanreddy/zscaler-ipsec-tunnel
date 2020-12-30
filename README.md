@@ -54,6 +54,10 @@ zscaler_password:
 
 device_template_name:
 
+# Device model type is cedge or vedge based on router platform
+
+device_model_type:  
+
 # IPsec route prefix for all Service VPNs
 
 #service_vpn_ipsec_route:  0.0.0.0/0

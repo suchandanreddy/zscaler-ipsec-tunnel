@@ -12,7 +12,7 @@ To use this code you will need:
 
 * Python 3.7+
 * vManage user login details. (User should have privilege level to configure feature templates and edit device template)
-* vEdge routers with device template attached.
+* cEdge or vEdge routers with device template attached.
 * Zscaler login and API key details. (User should be part of partner admin group)
 * Refer https://help.zscaler.com/zia/api-getting-started for documentation on how to enable API subscription for your Zscaler account
 
